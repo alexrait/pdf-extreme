@@ -45,7 +45,7 @@ import { fieldOverlay } from '../styled-system/recipes';
 import { FieldProperty, FieldType, PDFState } from './types';
 
 // PDF.js worker setup
-pdfjs.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${pdfjs.version}/pdf.worker.min.js`;
+pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjs.version}/build/pdf.worker.min.mjs`;
 
 const bidi = bidiFactory();
 
@@ -178,7 +178,12 @@ export default function App() {
   const renderPage = useCallback(async (bytes: Uint8Array, pageIndex: number, scale: number) => {
     if (!bytes || !canvasRef.current) return;
 
-    const loadingTask = pdfjs.getDocument({ data: bytes });
+    const loadingTask = pdfjs.getDocument({ 
+      data: bytes,
+      cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
+      cMapPacked: true,
+      standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`
+    });
     const pdf = await loadingTask.promise;
     const page = await pdf.getPage(pageIndex + 1);
     
@@ -187,16 +192,23 @@ export default function App() {
     const context = canvas.getContext('2d');
     
     if (context) {
-      canvas.height = viewport.height;
-      canvas.width = viewport.width;
+      const outputScale = window.devicePixelRatio || 1;
+      canvas.width = Math.floor(viewport.width * outputScale);
+      canvas.height = Math.floor(viewport.height * outputScale);
+      canvas.style.width = `${Math.floor(viewport.width)}px`;
+      canvas.style.height = `${Math.floor(viewport.height)}px`;
+      
       setPageDimensions({ width: viewport.width, height: viewport.height });
       
-      // For pdfjs-dist v4+, canvasContext might be enough, but let's check types
-      await page.render({ 
-        canvasContext: context as any, 
+      const renderContext = {
+        canvasContext: context as any,
         viewport,
+        transform: outputScale !== 1 ? [outputScale, 0, 0, outputScale, 0, 0] : undefined,
+        intent: 'display',
         canvas: canvasRef.current as any
-      }).promise;
+      };
+      
+      await page.render(renderContext).promise;
     }
   }, []);
 
@@ -799,7 +811,7 @@ export default function App() {
             className={css({ position: 'relative', boxShadow: '2xl', bg: 'white' })}
             style={{ width: pageDimensions?.width, height: pageDimensions?.height }}
           >
-            <canvas ref={canvasRef} />
+            <canvas ref={canvasRef} className={css({ display: 'block' })} />
             
             {/* Field Overlays */}
             {state.fields
