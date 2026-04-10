@@ -102,6 +102,7 @@ export default function App() {
   };
   
   const [pageDimensions, setPageDimensions] = useState<{ width: number; height: number } | null>(null);
+  const [isExporting, setIsExporting] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -315,150 +316,172 @@ export default function App() {
   // Save PDF
   const savePDF = async () => {
     if (!pdfDoc || !pdfBytes) return;
+    setIsExporting(true);
 
-    // Create a fresh copy to avoid modifying the original state in a way that breaks re-saves
-    const docToSave = await PDFDocument.load(pdfBytes);
-    docToSave.registerFontkit(fontkit);
+    try {
+      // Create a fresh copy to avoid modifying the original state in a way that breaks re-saves
+      const docToSave = await PDFDocument.load(pdfBytes);
+      docToSave.registerFontkit(fontkit);
 
-    // Embed fonts
-    const heeboUrl = 'https://fonts.gstatic.com/s/heebo/v22/NGOmv5_adj_adPn57IQ.ttf';
-    const heeboBytes = await fetch(heeboUrl).then(res => res.arrayBuffer());
-    const heeboFont = await docToSave.embedFont(heeboBytes);
-    
-    const helveticaFont = await docToSave.embedFont(StandardFonts.Helvetica);
-    const timesRomanFont = await docToSave.embedFont(StandardFonts.TimesRoman);
+      // Embed fonts
+      const heeboUrl = 'https://fonts.gstatic.com/s/heebo/v22/NGOmv5_adj_adPn57IQ.ttf';
+      const heeboBytes = await fetch(heeboUrl).then(res => res.arrayBuffer());
+      const heeboFont = await docToSave.embedFont(heeboBytes);
+      
+      const helveticaFont = await docToSave.embedFont(StandardFonts.Helvetica);
+      const timesRomanFont = await docToSave.embedFont(StandardFonts.TimesRoman);
 
-    // Embed custom fonts
-    const embeddedCustomFonts: Record<string, any> = {};
-    for (const cf of state.customFonts) {
-      try {
-        const fontBytes = Uint8Array.from(atob(cf.data), c => c.charCodeAt(0));
-        embeddedCustomFonts[cf.name] = await docToSave.embedFont(fontBytes);
-      } catch (e) {
-        console.error(`Failed to embed custom font ${cf.name}`, e);
-      }
-    }
-
-    const form = docToSave.getForm();
-    const pages = docToSave.getPages();
-
-    for (const f of state.fields) {
-      const page = pages[f.pageIndex];
-      const { height: pageHeight } = page.getSize();
-
-      const pdfX = f.x;
-      const pdfY = pageHeight - f.y - f.height;
-
-      // Select font
-      let selectedFont = heeboFont;
-      if (f.fontName === 'Helvetica') selectedFont = helveticaFont;
-      else if (f.fontName === 'TimesRoman') selectedFont = timesRomanFont;
-      else if (f.fontName && embeddedCustomFonts[f.fontName]) selectedFont = embeddedCustomFonts[f.fontName];
-
-      try {
-        if (f.type === 'text') {
-          const textField = form.createTextField(f.name);
-          
-          let textValue = f.value || '';
-          if (f.isRTL && textValue && f.useVisualOrder) {
-            const embedding = bidi.getEmbeddingLevels(textValue);
-            const visual = bidi.getVisual(textValue, embedding);
-            textValue = visual;
-          }
-          
-          textField.setText(textValue);
-          if (f.fontSize) textField.setFontSize(f.fontSize);
-          
-          textField.addToPage(page, {
-            x: pdfX,
-            y: pdfY,
-            width: f.width,
-            height: f.height,
-            font: selectedFont,
-          });
-          
-          if (f.isRTL) {
-            const dict = textField.acroField.dict;
-            dict.set(PDFName.of('Q'), PDFNumber.of(2)); // Right aligned
-          }
-          
-          if (f.isMultiline) textField.enableMultiline();
-          if (f.maxLength) textField.setMaxLength(f.maxLength);
-          
-        } else if (f.type === 'checkbox') {
-          const checkbox = form.createCheckBox(f.name);
-          checkbox.addToPage(page, {
-            x: pdfX,
-            y: pdfY,
-            width: f.width,
-            height: f.height,
-          });
-          if (f.isChecked) checkbox.check();
-          
-        } else if (f.type === 'radio') {
-          const group = form.getRadioGroup(f.groupName || f.name) || form.createRadioGroup(f.groupName || f.name);
-          group.addOptionToPage(f.exportValue || 'Option', page, {
-            x: pdfX,
-            y: pdfY,
-            width: f.width,
-            height: f.height,
-          });
-          if (f.isChecked) group.select(f.exportValue || 'Option');
-          
-        } else if (f.type === 'dropdown') {
-          const dropdown = form.createDropdown(f.name);
-          dropdown.setOptions(f.options || []);
-          dropdown.addToPage(page, {
-            x: pdfX,
-            y: pdfY,
-            width: f.width,
-            height: f.height,
-            font: selectedFont,
-          });
-          if (f.value) dropdown.select(f.value);
-        } else if (f.type === 'button') {
-          const button = form.createButton(f.name);
-          (button as any).addToPage(page, {
-            x: pdfX,
-            y: pdfY,
-            width: f.width,
-            height: f.height,
-          });
-          (button.acroField as any).setNormalCaption(PDFString.of(f.value || 'Button'));
-        } else if (f.type === 'listbox') {
-          const listBox = form.createOptionList(f.name);
-          listBox.setOptions(f.options || []);
-          listBox.addToPage(page, {
-            x: pdfX,
-            y: pdfY,
-            width: f.width,
-            height: f.height,
-            font: selectedFont,
-          });
-          if (f.value) listBox.select(f.value);
-        } else if (f.type === 'signature') {
-          const textField = form.createTextField(f.name);
-          textField.setText('Signature Placeholder');
-          textField.addToPage(page, {
-            x: pdfX,
-            y: pdfY,
-            width: f.width,
-            height: f.height,
-          });
+      // Embed custom fonts
+      const embeddedCustomFonts: Record<string, any> = {};
+      for (const cf of state.customFonts) {
+        try {
+          const fontBytes = Uint8Array.from(atob(cf.data), c => c.charCodeAt(0));
+          embeddedCustomFonts[cf.name] = await docToSave.embedFont(fontBytes);
+        } catch (e) {
+          console.error(`Failed to embed custom font ${cf.name}`, e);
         }
-      } catch (err) {
-        console.error(`Error creating field ${f.name}:`, err);
       }
-    }
 
-    const savedBytes = await docToSave.save();
-    const blob = new Blob([savedBytes], { type: 'application/pdf' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'pdf-extreme-edited.pdf';
-    link.click();
-    URL.revokeObjectURL(url);
+      const form = docToSave.getForm();
+      const pages = docToSave.getPages();
+
+      for (const f of state.fields) {
+        const page = pages[f.pageIndex];
+        const { height: pageHeight } = page.getSize();
+
+        const pdfX = f.x;
+        const pdfY = pageHeight - f.y - f.height;
+
+        // Select font
+        let selectedFont = heeboFont;
+        if (f.fontName === 'Helvetica') selectedFont = helveticaFont;
+        else if (f.fontName === 'TimesRoman') selectedFont = timesRomanFont;
+        else if (f.fontName && embeddedCustomFonts[f.fontName]) selectedFont = embeddedCustomFonts[f.fontName];
+
+        try {
+          if (f.type === 'text') {
+            const textField = form.createTextField(f.name);
+            
+            let textValue = f.value || '';
+            if (f.isRTL && textValue && f.useVisualOrder) {
+              const embedding = bidi.getEmbeddingLevels(textValue);
+              const visual = bidi.getVisual(textValue, embedding);
+              textValue = visual;
+            }
+            
+            textField.setText(textValue);
+            if (f.fontSize) textField.setFontSize(f.fontSize);
+            
+            textField.addToPage(page, {
+              x: pdfX,
+              y: pdfY,
+              width: f.width,
+              height: f.height,
+              font: selectedFont,
+            });
+            
+            if (f.isRTL) {
+              const dict = textField.acroField.dict;
+              dict.set(PDFName.of('Q'), PDFNumber.of(2)); // Right aligned
+            }
+            
+            if (f.isMultiline) textField.enableMultiline();
+            if (f.maxLength) textField.setMaxLength(f.maxLength);
+            
+          } else if (f.type === 'checkbox') {
+            const checkbox = form.createCheckBox(f.name);
+            checkbox.addToPage(page, {
+              x: pdfX,
+              y: pdfY,
+              width: f.width,
+              height: f.height,
+            });
+            if (f.isChecked) checkbox.check();
+            
+          } else if (f.type === 'radio') {
+            const group = form.getRadioGroup(f.groupName || f.name) || form.createRadioGroup(f.groupName || f.name);
+            group.addOptionToPage(f.exportValue || 'Option', page, {
+              x: pdfX,
+              y: pdfY,
+              width: f.width,
+              height: f.height,
+            });
+            if (f.isChecked) group.select(f.exportValue || 'Option');
+            
+          } else if (f.type === 'dropdown') {
+            const dropdown = form.createDropdown(f.name);
+            dropdown.setOptions(f.options || []);
+            dropdown.addToPage(page, {
+              x: pdfX,
+              y: pdfY,
+              width: f.width,
+              height: f.height,
+              font: selectedFont,
+            });
+            if (f.value) dropdown.select(f.value);
+          } else if (f.type === 'button') {
+            const button = form.createButton(f.name);
+            (button as any).addToPage(page, {
+              x: pdfX,
+              y: pdfY,
+              width: f.width,
+              height: f.height,
+            });
+            (button.acroField as any).setNormalCaption(PDFString.of(f.value || 'Button'));
+          } else if (f.type === 'listbox') {
+            const listBox = form.createOptionList(f.name);
+            listBox.setOptions(f.options || []);
+            listBox.addToPage(page, {
+              x: pdfX,
+              y: pdfY,
+              width: f.width,
+              height: f.height,
+              font: selectedFont,
+            });
+            if (f.value) listBox.select(f.value);
+          } else if (f.type === 'signature') {
+            const textField = form.createTextField(f.name);
+            textField.setText('Signature Placeholder');
+            textField.addToPage(page, {
+              x: pdfX,
+              y: pdfY,
+              width: f.width,
+              height: f.height,
+            });
+          }
+        } catch (err) {
+          console.error(`Error creating field ${f.name}:`, err);
+        }
+      }
+
+      const savedBytes = await docToSave.save();
+      const blob = new Blob([savedBytes], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      
+      // iOS detection
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+      
+      if (isIOS) {
+        // On iOS, opening in a new tab is more reliable for blobs
+        // Users can then use the system share sheet to save/send
+        window.open(url, '_blank');
+      } else {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = 'pdf-extreme-edited.pdf';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }
+      
+      // Revoke after a delay to ensure the browser has started the download/open process
+      setTimeout(() => URL.revokeObjectURL(url), 2000);
+    } catch (err) {
+      console.error('Save failed:', err);
+      alert('Failed to export PDF. Please try again.');
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   // Auto-collapse sidebar on mobile
@@ -740,14 +763,20 @@ export default function App() {
         <div className={css({ p: 4, borderTop: '1px solid', borderColor: 'gray.100', minW: '300px' })}>
           <button 
             onClick={savePDF} 
-            disabled={!pdfBytes}
+            disabled={!pdfBytes || isExporting}
             className={css({ 
               w: 'full', py: 2, bg: 'green.600', color: 'white', rounded: 'md', fontWeight: 'bold', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 2,
               _hover: { bg: 'green.700' },
               _disabled: { bg: 'gray.300', cursor: 'not-allowed' }
             })}
           >
-            <Download size={18} /> Export PDF
+            {isExporting ? (
+              <>Processing...</>
+            ) : (
+              <>
+                <Download size={18} /> Export PDF
+              </>
+            )}
           </button>
         </div>
       </motion.aside>
