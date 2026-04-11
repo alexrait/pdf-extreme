@@ -550,7 +550,6 @@ export default function App() {
         animate={{ width: state.isSidebarCollapsed ? '0px' : '300px', opacity: state.isSidebarCollapsed ? 0 : 1 }}
         transition={{ type: 'spring', stiffness: 300, damping: 30 }}
         className={css({ bg: 'white', borderRight: '1px solid', borderColor: 'gray.200', display: 'flex', flexDir: 'column', overflow: 'hidden', position: 'relative', zIndex: 20 })}
-        onClick={(e) => e.stopPropagation()}
       >
         <div className={css({ p: 4, borderBottom: '1px solid', borderColor: 'gray.100', display: 'flex', alignItems: 'center', gap: 2, minW: '300px' })}>
           <div className={css({ w: 8, h: 8, bg: 'blue.600', rounded: 'lg', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'white' })}>
@@ -882,10 +881,7 @@ export default function App() {
       {/* Main Content Area */}
       <main className={css({ flex: 1, display: 'flex', flexDir: 'column', overflow: 'hidden' })}>
         {/* Top Bar */}
-        <div 
-          className={css({ h: '56px', bg: 'white', borderBottom: '1px solid', borderColor: 'gray.200', display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 6 })}
-          onClick={(e) => e.stopPropagation()}
-        >
+        <div className={css({ h: '56px', bg: 'white', borderBottom: '1px solid', borderColor: 'gray.200', display: 'flex', alignItems: 'center', justifyContent: 'space-between', px: 6 })}>
           <div className={css({ display: 'flex', alignItems: 'center', gap: 4 })}>
             <div className={css({ display: 'flex', alignItems: 'center', gap: 1, bg: 'gray.100', p: 1, rounded: 'md' })}>
               <button 
@@ -924,7 +920,12 @@ export default function App() {
         {/* PDF Canvas Area */}
         <div 
           className={css({ flex: 1, overflow: 'auto', p: 8, display: 'flex', justifyContent: 'center', cursor: 'default' })}
-          onPointerDown={() => setState(prev => ({ ...prev, selectedFieldId: null }))}
+          onPointerDown={(e) => {
+            // Only deselect if we didn't click on a field or its controls
+            if (!(e.target as HTMLElement).closest('.draggable-field')) {
+              setState(prev => ({ ...prev, selectedFieldId: null }));
+            }
+          }}
         >
           <div 
             ref={containerRef}
@@ -940,8 +941,7 @@ export default function App() {
                 <div
                   key={field.id}
                   data-id={field.id}
-                  onPointerDown={(e) => {
-                    e.stopPropagation();
+                  onPointerDown={() => {
                     setState(prev => ({ ...prev, selectedFieldId: field.id }));
                   }}
                   className={`${fieldOverlay({ selected: state.selectedFieldId === field.id })} draggable-field`}
