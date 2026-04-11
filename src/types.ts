@@ -48,4 +48,5 @@ export interface PDFState {
   scale: number;
   isSidebarCollapsed: boolean;
   customFonts: CustomFont[];
+  pdfPassword?: string;
 }

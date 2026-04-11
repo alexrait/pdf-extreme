@@ -36,12 +36,16 @@ import {
   Upload,
   MousePointer2,
   List,
-  PenTool
+  PenTool,
+  GripVertical,
+  Lock,
+  Unlock,
+  X
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 import { css } from '../styled-system/css';
-import { fieldOverlay } from '../styled-system/recipes';
+import { fieldOverlay, dragHandle, resizeGrip } from '../styled-system/recipes';
 import { FieldProperty, FieldType, PDFState } from './types';
 
 // PDF.js worker setup
@@ -52,6 +56,12 @@ const bidi = bidiFactory();
 export default function App() {
   const [pdfBytes, setPdfBytes] = useState<Uint8Array | null>(null);
   const [pdfDoc, setPdfDoc] = useState<PDFDocument | null>(null);
+  const [isPasswordProtected, setIsPasswordProtected] = useState(false);
+  const [passwordModal, setPasswordModal] = useState<{ isOpen: boolean; file: File | null; error: string }>({
+    isOpen: false,
+    file: null,
+    error: ''
+  });
   const [state, setState] = useState<PDFState>({
     fields: [],
     selectedFieldId: null,
@@ -107,83 +117,100 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   // Load PDF
-  const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
+  const onFileChange = async (e: React.ChangeEvent<HTMLInputElement>, password?: string) => {
+    const file = e ? e.target.files?.[0] : passwordModal.file;
     if (!file) return;
 
-    const arrayBuffer = await file.arrayBuffer();
-    const bytes = new Uint8Array(arrayBuffer);
-    setPdfBytes(bytes);
-
-    const loadedDoc = await PDFDocument.load(bytes);
-    setPdfDoc(loadedDoc);
-    
-    const pages = loadedDoc.getPages();
-    const form = loadedDoc.getForm();
-    const existingFields: FieldProperty[] = [];
-
-    // Try to load existing fields
     try {
-      const fields = form.getFields();
-      fields.forEach(field => {
-        const widgets = field.acroField.getWidgets();
-        widgets.forEach((widget, index) => {
-          const rectangle = widget.getRectangle();
-          // In pdf-lib, widget.getPage() might return a PDFPage or undefined
-          const pageRef = widget.dict.get(PDFName.of('P'));
-          const page = pageRef ? loadedDoc.getPages().find(p => (p.ref as any) === pageRef) : undefined;
-          if (!page) return;
-          
-          const pageIndex = pages.findIndex(p => p.ref === page.ref);
-          const { height: pageHeight } = page.getSize();
+      const arrayBuffer = await file.arrayBuffer();
+      const bytes = new Uint8Array(arrayBuffer);
+      
+      let loadedDoc: PDFDocument;
+      try {
+        loadedDoc = await PDFDocument.load(bytes, { password } as any);
+      } catch (err: any) {
+        if (err.message.includes('password')) {
+          setPasswordModal({ isOpen: true, file, error: password ? 'Incorrect password' : '' });
+          return;
+        }
+        throw err;
+      }
 
-          // Convert PDF bottom-left to our top-left
-          const x = rectangle.x;
-          const y = pageHeight - rectangle.y - rectangle.height;
+      setPdfBytes(bytes);
+      setPdfDoc(loadedDoc);
+      setIsPasswordProtected(!!password || loadedDoc.isEncrypted);
+      setPasswordModal({ isOpen: false, file: null, error: '' });
+      
+      const pages = loadedDoc.getPages();
+      const form = loadedDoc.getForm();
+      const existingFields: FieldProperty[] = [];
 
-          let type: FieldType = 'text';
-          if (field instanceof PDFTextField) type = 'text';
-          else if (field instanceof PDFCheckBox) type = 'checkbox';
-          else if (field instanceof PDFRadioGroup) type = 'radio';
-          else if (field instanceof PDFDropdown) type = 'dropdown';
-          else if (field instanceof PDFButton) type = 'button';
+      // Try to load existing fields
+      try {
+        const fields = form.getFields();
+        fields.forEach(field => {
+          const widgets = field.acroField.getWidgets();
+          widgets.forEach((widget, index) => {
+            const rectangle = widget.getRectangle();
+            const pageRef = widget.dict.get(PDFName.of('P'));
+            const page = pageRef ? loadedDoc.getPages().find(p => (p.ref as any) === pageRef) : undefined;
+            if (!page) return;
+            
+            const pageIndex = pages.findIndex(p => p.ref === page.ref);
+            const { height: pageHeight } = page.getSize();
 
-          existingFields.push({
-            id: `${field.getName()}_${index}`,
-            type,
-            name: field.getName(),
-            x,
-            y,
-            width: rectangle.width,
-            height: rectangle.height,
-            pageIndex,
-            fontSize: 12,
-            isRTL: false,
+            const x = rectangle.x;
+            const y = pageHeight - rectangle.y - rectangle.height;
+
+            let type: FieldType = 'text';
+            if (field instanceof PDFTextField) type = 'text';
+            else if (field instanceof PDFCheckBox) type = 'checkbox';
+            else if (field instanceof PDFRadioGroup) type = 'radio';
+            else if (field instanceof PDFDropdown) type = 'dropdown';
+            else if (field instanceof PDFButton) type = 'button';
+
+            existingFields.push({
+              id: `${field.getName()}_${index}`,
+              type,
+              name: field.getName(),
+              x,
+              y,
+              width: rectangle.width,
+              height: rectangle.height,
+              pageIndex,
+              fontSize: 12,
+              isRTL: false,
+            });
           });
         });
-      });
-    } catch (err) {
-      console.error('Error loading existing fields:', err);
-    }
+      } catch (err) {
+        console.error('Error loading existing fields:', err);
+      }
 
-    setState(prev => ({
-      ...prev,
-      numPages: pages.length,
-      currentPageIndex: 0,
-      fields: existingFields,
-    }));
-    
-    renderPage(bytes, 0, state.scale);
+      setState(prev => ({
+        ...prev,
+        pdfPassword: password,
+        numPages: pages.length,
+        currentPageIndex: 0,
+        fields: existingFields,
+      }));
+      
+      renderPage(bytes, 0, state.scale, password);
+    } catch (err) {
+      console.error('Error loading PDF:', err);
+      alert('Failed to load PDF. It might be corrupted or unsupported.');
+    }
   };
 
-  const renderPage = useCallback(async (bytes: Uint8Array, pageIndex: number, scale: number) => {
+  const renderPage = useCallback(async (bytes: Uint8Array, pageIndex: number, scale: number, password?: string) => {
     if (!bytes || !canvasRef.current) return;
 
     const loadingTask = pdfjs.getDocument({ 
       data: bytes,
       cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
       cMapPacked: true,
-      standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`
+      standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
+      password
     });
     const pdf = await loadingTask.promise;
     const page = await pdf.getPage(pageIndex + 1);
@@ -215,9 +242,9 @@ export default function App() {
 
   useEffect(() => {
     if (pdfBytes) {
-      renderPage(pdfBytes, state.currentPageIndex, state.scale);
+      renderPage(pdfBytes, state.currentPageIndex, state.scale, state.pdfPassword);
     }
-  }, [pdfBytes, state.currentPageIndex, state.scale, renderPage]);
+  }, [pdfBytes, state.currentPageIndex, state.scale, state.pdfPassword, renderPage]);
 
   // Field Management
   const addField = (type: FieldType) => {
@@ -261,6 +288,7 @@ export default function App() {
     const interactable = interact('.draggable-field');
     
     interactable.draggable({
+      allowFrom: '.drag-handle',
       listeners: {
         move(event) {
           const id = event.target.getAttribute('data-id');
@@ -281,7 +309,7 @@ export default function App() {
     });
 
     interactable.resizable({
-      edges: { left: true, right: true, bottom: true, top: true },
+      edges: { left: '.grip-tl, .grip-bl', right: '.grip-tr, .grip-br', bottom: '.grip-bl, .grip-br', top: '.grip-tl, .grip-tr' },
       listeners: {
         move(event) {
           const id = event.target.getAttribute('data-id');
@@ -517,14 +545,29 @@ export default function App() {
         <div className={css({ flex: 1, overflowY: 'auto', p: 4 })}>
           <section className={css({ mb: 6 })}>
             <h2 className={css({ fontSize: 'xs', fontWeight: 'semibold', color: 'gray.400', textTransform: 'uppercase', mb: 3 })}>File</h2>
-            <label className={css({ 
-              display: 'flex', alignItems: 'center', gap: 2, p: 2, bg: 'blue.50', color: 'blue.700', rounded: 'md', cursor: 'pointer', fontSize: 'sm', fontWeight: 'medium',
-              _hover: { bg: 'blue.100' }
-            })}>
-              <FileUp size={18} />
-              Load PDF
-              <input type="file" accept=".pdf" onChange={onFileChange} className={css({ display: 'none' })} />
-            </label>
+            <div className={css({ display: 'flex', flexDir: 'column', gap: 2 })}>
+              <label className={css({ 
+                display: 'flex', alignItems: 'center', gap: 2, p: 2, bg: 'blue.50', color: 'blue.700', rounded: 'md', cursor: 'pointer', fontSize: 'sm', fontWeight: 'medium',
+                _hover: { bg: 'blue.100' }
+              })}>
+                <FileUp size={18} />
+                Load PDF
+                <input type="file" accept=".pdf" onChange={onFileChange} className={css({ display: 'none' })} />
+              </label>
+              
+              {pdfDoc && isPasswordProtected && (
+                <button 
+                  onClick={() => setIsPasswordProtected(false)}
+                  className={css({ 
+                    display: 'flex', alignItems: 'center', gap: 2, p: 2, bg: 'orange.50', color: 'orange.700', rounded: 'md', cursor: 'pointer', fontSize: 'sm', fontWeight: 'medium',
+                    _hover: { bg: 'orange.100' }
+                  })}
+                >
+                  <Unlock size={18} />
+                  Remove Password
+                </button>
+              )}
+            </div>
           </section>
 
           <section className={css({ mb: 6 })}>
@@ -871,11 +914,89 @@ export default function App() {
                       {field.name}
                     </span>
                   </div>
+
+                  {state.selectedFieldId === field.id && (
+                    <>
+                      <div className={`${dragHandle()} drag-handle`}>
+                        <GripVertical size={14} />
+                      </div>
+                      <div className={`${resizeGrip({ position: 'tl' })} grip-tl`} />
+                      <div className={`${resizeGrip({ position: 'tr' })} grip-tr`} />
+                      <div className={`${resizeGrip({ position: 'bl' })} grip-bl`} />
+                      <div className={`${resizeGrip({ position: 'br' })} grip-br`} />
+                    </>
+                  )}
                 </div>
               ))}
           </div>
         </div>
       </main>
+
+      {/* Password Modal */}
+      <AnimatePresence>
+        {passwordModal.isOpen && (
+          <div className={css({ 
+            position: 'fixed', inset: 0, bg: 'black/50', backdropFilter: 'blur(4px)', zIndex: 100,
+            display: 'flex', alignItems: 'center', justifyContent: 'center', p: 4
+          })}>
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className={css({ bg: 'white', rounded: 'xl', shadow: '2xl', w: 'full', maxW: '400px', overflow: 'hidden' })}
+            >
+              <div className={css({ p: 6, borderBottom: '1px solid', borderColor: 'gray.100', display: 'flex', alignItems: 'center', justifyContent: 'space-between' })}>
+                <div className={css({ display: 'flex', alignItems: 'center', gap: 3 })}>
+                  <div className={css({ w: 10, h: 10, bg: 'orange.100', color: 'orange.600', rounded: 'full', display: 'flex', alignItems: 'center', justifyContent: 'center' })}>
+                    <Lock size={20} />
+                  </div>
+                  <div>
+                    <h3 className={css({ fontWeight: 'bold', fontSize: 'lg' })}>Password Protected</h3>
+                    <p className={css({ fontSize: 'xs', color: 'gray.500' })}>This PDF requires a password to open.</p>
+                  </div>
+                </div>
+                <button onClick={() => setPasswordModal({ isOpen: false, file: null, error: '' })} className={css({ color: 'gray.400', _hover: { color: 'gray.600' } })}>
+                  <X size={20} />
+                </button>
+              </div>
+              
+              <form 
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const pwd = (e.currentTarget.elements.namedItem('password') as HTMLInputElement).value;
+                  onFileChange(null as any, pwd);
+                }}
+                className={css({ p: 6, display: 'flex', flexDir: 'column', gap: 4 })}
+              >
+                <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
+                  <label className={css({ fontSize: 'xs', fontWeight: 'medium', color: 'gray.700' })}>Enter Password</label>
+                  <input 
+                    name="password"
+                    type="password" 
+                    autoFocus
+                    className={css({ 
+                      w: 'full', px: 3, py: 2, bg: 'gray.50', border: '1px solid', borderColor: 'gray.200', rounded: 'md', fontSize: 'sm',
+                      _focus: { borderColor: 'blue.500', outline: 'none', bg: 'white' }
+                    })}
+                    placeholder="••••••••"
+                  />
+                  {passwordModal.error && <p className={css({ fontSize: 'xs', color: 'red.500', mt: 1 })}>{passwordModal.error}</p>}
+                </div>
+                
+                <button 
+                  type="submit"
+                  className={css({ 
+                    w: 'full', py: 2.5, bg: 'blue.600', color: 'white', rounded: 'md', fontWeight: 'bold', shadow: 'sm',
+                    _hover: { bg: 'blue.700' }
+                  })}
+                >
+                  Unlock PDF
+                </button>
+              </form>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
