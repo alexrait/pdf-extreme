@@ -348,13 +348,20 @@ export default function App() {
 
     try {
       // Create a fresh copy to avoid modifying the original state in a way that breaks re-saves
-      const docToSave = await PDFDocument.load(pdfBytes);
+      // We use the stored password to decrypt it again for saving
+      const docToSave = await PDFDocument.load(pdfBytes, { password: state.pdfPassword } as any);
       docToSave.registerFontkit(fontkit);
 
       // Embed fonts
       const heeboUrl = 'https://fonts.gstatic.com/s/heebo/v22/NGOmv5_adj_adPn57IQ.ttf';
-      const heeboBytes = await fetch(heeboUrl).then(res => res.arrayBuffer());
-      const heeboFont = await docToSave.embedFont(heeboBytes);
+      let heeboFont;
+      try {
+        const heeboBytes = await fetch(heeboUrl).then(res => res.arrayBuffer());
+        heeboFont = await docToSave.embedFont(heeboBytes);
+      } catch (e) {
+        console.error('Failed to fetch Heebo font, falling back to Helvetica', e);
+        heeboFont = await docToSave.embedFont(StandardFonts.Helvetica);
+      }
       
       const helveticaFont = await docToSave.embedFont(StandardFonts.Helvetica);
       const timesRomanFont = await docToSave.embedFont(StandardFonts.TimesRoman);
@@ -491,8 +498,11 @@ export default function App() {
       
       if (isIOS) {
         // On iOS, opening in a new tab is more reliable for blobs
-        // Users can then use the system share sheet to save/send
-        window.open(url, '_blank');
+        // If window.open is blocked, we try a direct location change as a fallback
+        const newWin = window.open(url, '_blank');
+        if (!newWin) {
+          window.location.href = url;
+        }
       } else {
         const link = document.createElement('a');
         link.href = url;
@@ -503,10 +513,10 @@ export default function App() {
       }
       
       // Revoke after a delay to ensure the browser has started the download/open process
-      setTimeout(() => URL.revokeObjectURL(url), 2000);
-    } catch (err) {
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    } catch (err: any) {
       console.error('Save failed:', err);
-      alert('Failed to export PDF. Please try again.');
+      alert(`Failed to export PDF: ${err.message || 'Unknown error'}. Please check your connection and try again.`);
     } finally {
       setIsExporting(false);
     }
@@ -555,9 +565,13 @@ export default function App() {
                 <input type="file" accept=".pdf" onChange={onFileChange} className={css({ display: 'none' })} />
               </label>
               
-              {pdfDoc && isPasswordProtected && (
+      {pdfDoc && isPasswordProtected && (
                 <button 
-                  onClick={() => setIsPasswordProtected(false)}
+                  onClick={() => {
+                    setIsPasswordProtected(false);
+                    // We keep state.pdfPassword because we need it to re-load the doc for saving
+                    // but by setting isPasswordProtected to false, we indicate intent
+                  }}
                   className={css({ 
                     display: 'flex', alignItems: 'center', gap: 2, p: 2, bg: 'orange.50', color: 'orange.700', rounded: 'md', cursor: 'pointer', fontSize: 'sm', fontWeight: 'medium',
                     _hover: { bg: 'orange.100' }
@@ -877,11 +891,15 @@ export default function App() {
         </div>
 
         {/* PDF Canvas Area */}
-        <div className={css({ flex: 1, overflow: 'auto', p: 8, display: 'flex', justifyContent: 'center' })}>
+        <div 
+          className={css({ flex: 1, overflow: 'auto', p: 8, display: 'flex', justifyContent: 'center' })}
+          onClick={() => setState(prev => ({ ...prev, selectedFieldId: null }))}
+        >
           <div 
             ref={containerRef}
             className={css({ position: 'relative', boxShadow: '2xl', bg: 'white' })}
             style={{ width: pageDimensions?.width, height: pageDimensions?.height }}
+            onClick={(e) => e.stopPropagation()}
           >
             <canvas ref={canvasRef} className={css({ display: 'block' })} />
             
@@ -892,7 +910,10 @@ export default function App() {
                 <div
                   key={field.id}
                   data-id={field.id}
-                  onClick={() => setState(prev => ({ ...prev, selectedFieldId: field.id }))}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setState(prev => ({ ...prev, selectedFieldId: field.id }));
+                  }}
                   className={`${fieldOverlay({ selected: state.selectedFieldId === field.id })} draggable-field`}
                   style={{
                     left: field.x * state.scale,
