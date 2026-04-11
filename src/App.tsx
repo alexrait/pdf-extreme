@@ -136,7 +136,7 @@ export default function App() {
         throw err;
       }
 
-      setPdfBytes(bytes);
+      setPdfBytes(bytes.slice());
       setPdfDoc(loadedDoc);
       setIsPasswordProtected(!!password || loadedDoc.isEncrypted);
       setPasswordModal({ isOpen: false, file: null, error: '' });
@@ -206,7 +206,7 @@ export default function App() {
     if (!bytes || !canvasRef.current) return;
 
     const loadingTask = pdfjs.getDocument({ 
-      data: bytes,
+      data: bytes.slice(),
       cMapUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/cmaps/`,
       cMapPacked: true,
       standardFontDataUrl: `https://unpkg.com/pdfjs-dist@${pdfjs.version}/standard_fonts/`,
@@ -347,9 +347,15 @@ export default function App() {
     setIsExporting(true);
 
     try {
+      // Basic sanity check for PDF header
+      if (pdfBytes.length < 4 || pdfBytes[0] !== 0x25 || pdfBytes[1] !== 0x50 || pdfBytes[2] !== 0x44 || pdfBytes[3] !== 0x46) {
+        console.error('PDF header missing or invalid:', pdfBytes.slice(0, 10));
+        throw new Error('The PDF data in memory appears to be corrupted (missing PDF header). Please try reloading the file.');
+      }
+
       // Create a fresh copy to avoid modifying the original state in a way that breaks re-saves
-      // We use the stored password to decrypt it again for saving
-      const docToSave = await PDFDocument.load(pdfBytes, { password: state.pdfPassword } as any);
+      // We use .slice() to ensure we have a fresh, non-detached buffer
+      const docToSave = await PDFDocument.load(pdfBytes.slice(), { password: state.pdfPassword } as any);
       docToSave.registerFontkit(fontkit);
 
       // Embed fonts
@@ -644,177 +650,198 @@ export default function App() {
             </div>
           </section>
 
-          {selectedField && (
-            <section className={css({ borderTop: '1px solid', borderColor: 'gray.100', pt: 6 })}>
-              <div className={css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 4 })}>
-                <h2 className={css({ fontSize: 'xs', fontWeight: 'semibold', color: 'gray.400', textTransform: 'uppercase' })}>Properties</h2>
-                <button onClick={() => deleteField(selectedField.id)} className={css({ color: 'red.500', _hover: { color: 'red.600' } })}>
-                  <Trash2 size={16} />
-                </button>
-              </div>
-              
-              <div className={css({ display: 'flex', flexDir: 'column', gap: 4 })}>
-                <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
-                  <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Field Name</label>
-                  <input 
-                    type="text" 
-                    value={selectedField.name} 
-                    onChange={(e) => updateField(selectedField.id, { name: e.target.value })}
-                    className={inputStyle}
-                  />
+          <AnimatePresence mode="wait">
+            {selectedField ? (
+              <motion.section 
+                key={selectedField.id}
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className={css({ borderTop: '1px solid', borderColor: 'gray.100', pt: 6 })}
+              >
+                <div className={css({ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 4 })}>
+                  <h2 className={css({ fontSize: 'xs', fontWeight: 'semibold', color: 'gray.400', textTransform: 'uppercase' })}>Properties</h2>
+                  <button onClick={() => deleteField(selectedField.id)} className={css({ color: 'red.500', _hover: { color: 'red.600' } })}>
+                    <Trash2 size={16} />
+                  </button>
                 </div>
-
-                {(selectedField.type === 'text' || selectedField.type === 'button' || selectedField.type === 'listbox') && (
+                
+                <div className={css({ display: 'flex', flexDir: 'column', gap: 4 })}>
                   <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
-                    <label className={css({ fontSize: 'xs', color: 'gray.500' })}>
-                      {selectedField.type === 'button' ? 'Button Label' : 'Value'}
-                    </label>
+                    <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Field Name</label>
                     <input 
                       type="text" 
-                      value={selectedField.value || ''} 
-                      onChange={(e) => updateField(selectedField.id, { value: e.target.value })}
+                      value={selectedField.name} 
+                      onChange={(e) => updateField(selectedField.id, { name: e.target.value })}
                       className={inputStyle}
                     />
                   </div>
-                )}
 
-                <div className={css({ display: 'flex', alignItems: 'center', gap: 2 })}>
-                  <input 
-                    type="checkbox" 
-                    id="isRequired"
-                    checked={selectedField.isRequired} 
-                    onChange={(e) => updateField(selectedField.id, { isRequired: e.target.checked })}
-                  />
-                  <label htmlFor="isRequired" className={css({ fontSize: 'xs', color: 'gray.700' })}>Required</label>
-                </div>
+                  {(selectedField.type === 'text' || selectedField.type === 'button' || selectedField.type === 'listbox') && (
+                    <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
+                      <label className={css({ fontSize: 'xs', color: 'gray.500' })}>
+                        {selectedField.type === 'button' ? 'Button Label' : 'Value'}
+                      </label>
+                      <input 
+                        type="text" 
+                        value={selectedField.value || ''} 
+                        onChange={(e) => updateField(selectedField.id, { value: e.target.value })}
+                        className={inputStyle}
+                      />
+                    </div>
+                  )}
 
-                {(selectedField.type === 'checkbox' || selectedField.type === 'radio') && (
                   <div className={css({ display: 'flex', alignItems: 'center', gap: 2 })}>
                     <input 
                       type="checkbox" 
-                      id="isChecked"
-                      checked={selectedField.isChecked} 
-                      onChange={(e) => updateField(selectedField.id, { isChecked: e.target.checked })}
+                      id="isRequired"
+                      checked={selectedField.isRequired} 
+                      onChange={(e) => updateField(selectedField.id, { isRequired: e.target.checked })}
                     />
-                    <label htmlFor="isChecked" className={css({ fontSize: 'xs', color: 'gray.700' })}>Initially Checked</label>
+                    <label htmlFor="isRequired" className={css({ fontSize: 'xs', color: 'gray.700' })}>Required</label>
                   </div>
-                )}
 
-                <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
-                  <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Tooltip</label>
-                  <input 
-                    type="text" 
-                    value={selectedField.tooltip || ''} 
-                    onChange={(e) => updateField(selectedField.id, { tooltip: e.target.value })}
-                    className={inputStyle}
-                  />
-                </div>
-
-                {(selectedField.type === 'text' || selectedField.type === 'dropdown' || selectedField.type === 'listbox' || selectedField.type === 'button') && (
-                  <>
-                    <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
-                      <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Font</label>
-                      <select 
-                        value={selectedField.fontName || 'Heebo'} 
-                        onChange={(e) => updateField(selectedField.id, { fontName: e.target.value })}
-                        className={inputStyle}
-                      >
-                        <option value="Heebo">Heebo (Hebrew/English)</option>
-                        <option value="Helvetica">Helvetica (English Only)</option>
-                        <option value="TimesRoman">Times Roman (English Only)</option>
-                        {state.customFonts.map(f => (
-                          <option key={f.name} value={f.name}>{f.name} (Custom)</option>
-                        ))}
-                      </select>
-                    </div>
-                    <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
-                      <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Font Size</label>
-                      <input 
-                        type="number" 
-                        value={selectedField.fontSize} 
-                        onChange={(e) => updateField(selectedField.id, { fontSize: parseInt(e.target.value) })}
-                        className={inputStyle}
-                      />
-                    </div>
-                  </>
-                )}
-
-                {selectedField.type === 'text' && (
-                  <>
+                  {(selectedField.type === 'checkbox' || selectedField.type === 'radio') && (
                     <div className={css({ display: 'flex', alignItems: 'center', gap: 2 })}>
                       <input 
                         type="checkbox" 
-                        id="isRTL"
-                        checked={selectedField.isRTL} 
-                        onChange={(e) => updateField(selectedField.id, { isRTL: e.target.checked })}
+                        id="isChecked"
+                        checked={selectedField.isChecked} 
+                        onChange={(e) => updateField(selectedField.id, { isChecked: e.target.checked })}
                       />
-                      <label htmlFor="isRTL" className={css({ fontSize: 'xs', color: 'gray.700' })}>RTL (Hebrew)</label>
+                      <label htmlFor="isChecked" className={css({ fontSize: 'xs', color: 'gray.700' })}>Initially Checked</label>
                     </div>
-                    {selectedField.isRTL && (
-                      <div className={css({ display: 'flex', alignItems: 'center', gap: 2, ml: 4 })}>
+                  )}
+
+                  <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
+                    <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Tooltip</label>
+                    <input 
+                      type="text" 
+                      value={selectedField.tooltip || ''} 
+                      onChange={(e) => updateField(selectedField.id, { tooltip: e.target.value })}
+                      className={inputStyle}
+                    />
+                  </div>
+
+                  {(selectedField.type === 'text' || selectedField.type === 'dropdown' || selectedField.type === 'listbox' || selectedField.type === 'button') && (
+                    <>
+                      <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
+                        <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Font</label>
+                        <select 
+                          value={selectedField.fontName || 'Heebo'} 
+                          onChange={(e) => updateField(selectedField.id, { fontName: e.target.value })}
+                          className={inputStyle}
+                        >
+                          <option value="Heebo">Heebo (Hebrew/English)</option>
+                          <option value="Helvetica">Helvetica (English Only)</option>
+                          <option value="TimesRoman">Times Roman (English Only)</option>
+                          {state.customFonts.map(f => (
+                            <option key={f.name} value={f.name}>{f.name} (Custom)</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
+                        <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Font Size</label>
+                        <input 
+                          type="number" 
+                          value={selectedField.fontSize} 
+                          onChange={(e) => updateField(selectedField.id, { fontSize: parseInt(e.target.value) })}
+                          className={inputStyle}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedField.type === 'text' && (
+                    <>
+                      <div className={css({ display: 'flex', alignItems: 'center', gap: 2 })}>
                         <input 
                           type="checkbox" 
-                          id="useVisualOrder"
-                          checked={selectedField.useVisualOrder} 
-                          onChange={(e) => updateField(selectedField.id, { useVisualOrder: e.target.checked })}
+                          id="isRTL"
+                          checked={selectedField.isRTL} 
+                          onChange={(e) => updateField(selectedField.id, { isRTL: e.target.checked })}
                         />
-                        <label htmlFor="useVisualOrder" className={css({ fontSize: 'xs', color: 'gray.700' })}>Visual Order</label>
+                        <label htmlFor="isRTL" className={css({ fontSize: 'xs', color: 'gray.700' })}>RTL (Hebrew)</label>
                       </div>
-                    )}
-                    <div className={css({ display: 'flex', alignItems: 'center', gap: 2 })}>
-                      <input 
-                        type="checkbox" 
-                        id="isMultiline"
-                        checked={selectedField.isMultiline} 
-                        onChange={(e) => updateField(selectedField.id, { isMultiline: e.target.checked })}
-                      />
-                      <label htmlFor="isMultiline" className={css({ fontSize: 'xs', color: 'gray.700' })}>Multiline</label>
-                    </div>
+                      {selectedField.isRTL && (
+                        <div className={css({ display: 'flex', alignItems: 'center', gap: 2, ml: 4 })}>
+                          <input 
+                            type="checkbox" 
+                            id="useVisualOrder"
+                            checked={selectedField.useVisualOrder} 
+                            onChange={(e) => updateField(selectedField.id, { useVisualOrder: e.target.checked })}
+                          />
+                          <label htmlFor="useVisualOrder" className={css({ fontSize: 'xs', color: 'gray.700' })}>Visual Order</label>
+                        </div>
+                      )}
+                      <div className={css({ display: 'flex', alignItems: 'center', gap: 2 })}>
+                        <input 
+                          type="checkbox" 
+                          id="isMultiline"
+                          checked={selectedField.isMultiline} 
+                          onChange={(e) => updateField(selectedField.id, { isMultiline: e.target.checked })}
+                        />
+                        <label htmlFor="isMultiline" className={css({ fontSize: 'xs', color: 'gray.700' })}>Multiline</label>
+                      </div>
+                      <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
+                        <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Max Length</label>
+                        <input 
+                          type="number" 
+                          value={selectedField.maxLength || ''} 
+                          onChange={(e) => updateField(selectedField.id, { maxLength: parseInt(e.target.value) })}
+                          className={inputStyle}
+                        />
+                      </div>
+                    </>
+                  )}
+
+                  {selectedField.type === 'radio' && (
                     <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
-                      <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Max Length</label>
+                      <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Group Name</label>
                       <input 
-                        type="number" 
-                        value={selectedField.maxLength || ''} 
-                        onChange={(e) => updateField(selectedField.id, { maxLength: parseInt(e.target.value) })}
+                        type="text" 
+                        value={selectedField.groupName || ''} 
+                        onChange={(e) => updateField(selectedField.id, { groupName: e.target.value })}
+                        className={inputStyle}
+                      />
+                      <label className={css({ fontSize: 'xs', color: 'gray.500', mt: 2 })}>Export Value</label>
+                      <input 
+                        type="text" 
+                        value={selectedField.exportValue || ''} 
+                        onChange={(e) => updateField(selectedField.id, { exportValue: e.target.value })}
                         className={inputStyle}
                       />
                     </div>
-                  </>
-                )}
+                  )}
 
-                {selectedField.type === 'radio' && (
-                  <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
-                    <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Group Name</label>
-                    <input 
-                      type="text" 
-                      value={selectedField.groupName || ''} 
-                      onChange={(e) => updateField(selectedField.id, { groupName: e.target.value })}
-                      className={inputStyle}
-                    />
-                    <label className={css({ fontSize: 'xs', color: 'gray.500', mt: 2 })}>Export Value</label>
-                    <input 
-                      type="text" 
-                      value={selectedField.exportValue || ''} 
-                      onChange={(e) => updateField(selectedField.id, { exportValue: e.target.value })}
-                      className={inputStyle}
-                    />
-                  </div>
-                )}
-
-                {(selectedField.type === 'dropdown' || selectedField.type === 'listbox') && (
-                  <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
-                    <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Options (comma separated)</label>
-                    <textarea 
-                      value={selectedField.options?.join(', ') || ''} 
-                      onChange={(e) => updateField(selectedField.id, { options: e.target.value.split(',').map(s => s.trim()) })}
-                      className={inputStyle}
-                      rows={3}
-                    />
-                  </div>
-                )}
-              </div>
-            </section>
-          )}
+                  {(selectedField.type === 'dropdown' || selectedField.type === 'listbox') && (
+                    <div className={css({ display: 'flex', flexDir: 'column', gap: 1 })}>
+                      <label className={css({ fontSize: 'xs', color: 'gray.500' })}>Options (comma separated)</label>
+                      <textarea 
+                        value={selectedField.options?.join(', ') || ''} 
+                        onChange={(e) => updateField(selectedField.id, { options: e.target.value.split(',').map(s => s.trim()) })}
+                        className={inputStyle}
+                        rows={3}
+                      />
+                    </div>
+                  )}
+                </div>
+              </motion.section>
+            ) : (
+              <motion.div 
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                className={css({ 
+                  flex: 1, display: 'flex', flexDir: 'column', alignItems: 'center', justifyContent: 'center', 
+                  p: 8, textAlign: 'center', color: 'gray.400', borderTop: '1px solid', borderColor: 'gray.100', pt: 12
+                })}
+              >
+                <MousePointer2 size={32} className={css({ mb: 4, opacity: 0.5 })} />
+                <p className={css({ fontSize: 'sm', fontWeight: 'medium' })}>No field selected</p>
+                <p className={css({ fontSize: 'xs', mt: 1 })}>Select a field on the PDF to edit its properties</p>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </div>
 
         <div className={css({ p: 4, borderTop: '1px solid', borderColor: 'gray.100', minW: '300px' })}>
